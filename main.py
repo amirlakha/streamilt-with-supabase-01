@@ -7,35 +7,40 @@ from statsforecast.models import CrostonOptimized
 
 # Initialize connection to db
 
-
 @st.cache_resource
 def init_connection():
-    url: str = st.secrets['supabase_url']
-    key: str = st.secrets['supabase_key']
+    url: str = st.secrets["supabase_url"]
+    key: str = st.secrets["supabase_key"]
 
     client: Client = create_client(url, key)
 
     return client
 
-
+# Run the function to make the connection
 supabase = init_connection()
 
-# Query the db
 
-
-@st.cache_data(ttl=600)  # cache clears after 10 minutes
-def run_query():
-    # Return all data
-    return supabase.table('car_parts_monthly_sales').select("*").execute()
-
-
+# Function to query the db
+# Create a Dataframe
+# Make sure that volume is an integer
+# Return dataframe
 @st.cache_data(ttl=600)
+def run_query():
+
+    rows =  supabase.table('car_parts_monthly_sales').select("*").execute()
+    df = pd.json_normalize(rows.data)
+    df['volume'] = df['volume'].astype(int)
+    return df
+
+@st.cache_resource(ttl=600)
 def create_dataframe():
     rows = run_query()
-    df = pd.json_normalize(rows.data)
+    df = pd.json_normalize(rows['data'])
     df['volume'] = df['volume'].astype(int)
 
     return df
+
+# Function to plot data
 
 
 @st.cache_data
@@ -44,9 +49,10 @@ def plot_volume(ids):
 
     df['volume'] = df['volume'].astype(int)
 
-    x = df[df["parts_id"] == 2674]['date']
+
 
     for id in ids:
+        x = df[df["parts_id"] == id]['date']
         ax.plot(x,
                 df[df['parts_id'] == id]['volume'], label=id)
     ax.xaxis.set_major_locator(plt.MaxNLocator(10))
@@ -55,6 +61,8 @@ def plot_volume(ids):
 
     st.pyplot(fig)
 
+# Function to format the dataframe as expected
+# by statsforecast
 
 @st.cache_data
 def format_dataset(ids):
@@ -65,11 +73,12 @@ def format_dataset(ids):
 
     return model_df
 
+# Create the statsforecast object to train the model
+# Return the statsforecast object
 
 @st.cache_resource
 def create_sf_object(model_df):
     models = [CrostonOptimized()]
-
     sf = StatsForecast(
         df=model_df,
         models=models,
@@ -79,23 +88,23 @@ def create_sf_object(model_df):
 
     return sf
 
+# Function to make predictions
+# Inputs: product_ids and horizon
+# Returns a CSV
 
 @st.cache_data(show_spinner="Making predictions...")
 def make_predictions(ids, horizon):
-
     model_df = format_dataset(ids)
-
     sf = create_sf_object(model_df)
 
     forecast_df = sf.forecast(h=horizon)
 
     return forecast_df.to_csv(header=True)
 
-
 if __name__ == "__main__":
     st.title("Forecast product demand")
 
-    df = create_dataframe()
+    df = run_query()
 
     st.subheader("Select a product")
     product_ids = st.multiselect(
@@ -111,11 +120,12 @@ if __name__ == "__main__":
 
             forecast_btn = st.button("Forecast", type="primary")
 
+            # Download CSV file if the forecast button is pressed
             if forecast_btn:
-                csv_file = make_predictions(product_ids, horizon)
+                csv = make_predictions(product_ids, horizon)
                 st.download_button(
-                    label="Download predictions",
-                    data=csv_file,
-                    file_name="predictions.csv",
+                    label="Download CSV",
+                    data=csv,
+                    file_name="forecast.csv",
                     mime="text/csv"
                 )
